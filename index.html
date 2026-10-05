@@ -35,7 +35,8 @@
     .transport-tools{display:flex;align-items:center;gap:7px}
     .icon-btn,.small-btn{border:1px solid var(--line);background:var(--panel);border-radius:9px;padding:8px 10px;font-weight:700}
     .transport .icon-btn{border-color:color-mix(in srgb,var(--bg),transparent 72%);background:transparent;color:var(--bg)}
-    .icon-btn{width:38px;height:38px;padding:0;display:grid;place-items:center}.icon-btn svg{width:17px;height:17px}
+    .icon-btn{width:38px;height:38px;padding:0;display:grid;place-items:center;transition:all 0.15s}.icon-btn svg{width:17px;height:17px}
+    .icon-btn.active-loop{color:var(--accent);border-color:var(--accent);background:color-mix(in srgb,var(--accent),transparent 90%)}
     .workspace{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:16px;margin-top:16px;align-items:start}
     .panel{background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow)}
     .composer{border-radius:7px 7px 18px 18px;overflow:hidden}
@@ -74,6 +75,7 @@
       <div class="transport-copy"><strong>Turn digits into rhythm.</strong><span id="status">3 layers · ready to play</span></div>
       <div class="transport-tools">
         <div class="tempo"><label for="tempo">BPM</label><input id="tempo" type="number" min="40" max="240" value="112" inputmode="numeric" /></div>
+        <button class="icon-btn" id="loopToggle" title="Toggle loop" aria-label="Toggle loop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></button>
         <button class="icon-btn" id="saveMix" title="Save mix to library" aria-label="Save mix to library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h12l2 2v16H5z"/><path d="M8 3v6h8V3M8 21v-8h8v8"/></svg></button>
         <button class="icon-btn" id="clearAll" title="Clear all layers" aria-label="Clear all layers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3m-8 0 1 14h8l1-14"/></svg></button>
       </div>
@@ -91,7 +93,7 @@
         <div class="library-tools"><button id="exportBtn">Export JSON</button><label>Import JSON<input id="importFile" type="file" accept="application/json,.json" /></label></div>
       </aside>
     </div>
-    <p class="note">Audio starts after your first tap. Session pieces disappear when this page closes — export anything you want to keep.</p>
+    <p class="note">Audio starts after your first tap. Your session is automatically saved to your browser.</p>
   </main>
 
   <div class="sound-popover" id="soundPopover" role="dialog" aria-modal="false" aria-label="Choose an instrument">
@@ -115,7 +117,23 @@
     {name:'Spark',seq:'2718281828',family:'Bells',sound:'marimba'},
     {name:'Low line',seq:'1123581321',family:'Bass',sound:'roundbass'}
   ];
-  var library=[]; var pickerLayer=null; var audio=null; var playing=false; var timers=[]; var master=null;
+  var library=[]; var looping=false; var pickerLayer=null; var audio=null; var playing=false; var timers=[]; var master=null;
+  try {
+    var saved = JSON.parse(localStorage.getItem('number-music-session'));
+    if (saved) {
+      if (saved.layers && saved.layers.length) layers = saved.layers;
+      if (saved.library) library = saved.library;
+      if (saved.looping) looping = saved.looping;
+    }
+  } catch(e) {}
+  function persist() {
+    localStorage.setItem('number-music-session', JSON.stringify({
+      layers: layers,
+      library: library,
+      tempo: $('#tempo').value,
+      looping: looping
+    }));
+  }
   var $=function(s,r){return (r||document).querySelector(s)};
   var $$=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
   var icons={play:'<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',save:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h12l2 2v16H5z"/><path d="M8 3v6h8V3"/></svg>',trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 7h14M9 7V4h6v3m-8 0 1 14h8l1-14"/></svg>'};
@@ -128,7 +146,7 @@
       '<div class="sequence-row"><input class="sequence" inputmode="numeric" value="'+esc(l.seq)+'" placeholder="Type digits, e.g. 314159" aria-label="Digit sequence"><button class="sound-btn"><b>'+esc(soundName(l.sound))+'</b><span>'+esc(l.family)+' · choose</span></button></div>'+
       '<div class="digit-strip">'+[0,1,2,3,4,5,6,7,8,9].map(function(n){return '<button class="digit" data-digit="'+n+'">'+n+'</button>'}).join('')+'</div><div class="drop-hint">Drop piece here</div>';
       box.appendChild(el)
-    }); updateStatus();
+    }); updateStatus(); persist();
   }
   function updateStatus(){var steps=layers.reduce(function(n,l){return n+l.seq.length},0);$('#status').textContent=layers.length+' layer'+(layers.length===1?'':'s')+' · '+steps+' beats loaded'}
   function ctx(){if(!audio){audio=new (window.AudioContext||window.webkitAudioContext)();master=audio.createGain();master.gain.value=.42;master.connect(audio.destination)}if(audio.state==='suspended')audio.resume();return audio}
@@ -151,10 +169,10 @@
     else tone(c,t,base,sound==='sawtooth'?'sawtooth':sound==='square'?'square':sound==='triangle'?'triangle':'sine',.28,.18)
   }
   function stop(){timers.forEach(clearTimeout);timers=[];playing=false;$('#playAll').classList.remove('active');$('#playAll').setAttribute('aria-label','Play full mix');updateStatus()}
-  function play(items){stop();var valid=items.filter(function(l){return l.seq.length});if(!valid.length){toast('Add some digits first');return}playing=true;$('#playAll').classList.add('active');$('#playAll').setAttribute('aria-label','Stop full mix');var bpm=Math.min(240,Math.max(40,parseInt($('#tempo').value,10)||112));$('#tempo').value=bpm;var beat=60000/bpm/2,max=Math.max.apply(null,valid.map(function(l){return l.seq.length}));valid.forEach(function(l){for(var i=0;i<l.seq.length;i++){(function(d,when){timers.push(setTimeout(function(){hit(l.sound,Number(d),ctx().currentTime+.01)},when))})(l.seq[i],i*beat)}});timers.push(setTimeout(stop,max*beat+250))}
+  function play(items){stop();var valid=items.filter(function(l){return l.seq.length});if(!valid.length){toast('Add some digits first');return}playing=true;$('#playAll').classList.add('active');$('#playAll').setAttribute('aria-label','Stop full mix');var bpm=Math.min(240,Math.max(40,parseInt($('#tempo').value,10)||112));$('#tempo').value=bpm;var beat=60000/bpm/2,max=Math.max.apply(null,valid.map(function(l){return l.seq.length}));valid.forEach(function(l){for(var i=0;i<l.seq.length;i++){(function(d,when){timers.push(setTimeout(function(){hit(l.sound,Number(d),ctx().currentTime+.01)},when))})(l.seq[i],i*beat)}});timers.push(setTimeout(function(){if(looping&&items===layers){play(items)}else{setTimeout(stop,250)}},max*beat))}
   function toast(msg){var el=$('#toast');el.textContent=msg;el.classList.add('show');clearTimeout(el._t);el._t=setTimeout(function(){el.classList.remove('show')},1800)}
   function savePiece(l){library.push({id:Date.now()+Math.random(),name:l.name||'Untitled',seq:l.seq,family:l.family,sound:l.sound});renderLibrary();toast('Saved to this session')}
-  function renderLibrary(){var box=$('#libraryList');if(!library.length){box.innerHTML='<div class="empty">Your saved pieces will appear here for this session.</div>';return}box.innerHTML=library.map(function(p,i){return '<article class="piece" draggable="true" data-piece="'+i+'"><strong>'+esc(p.name)+'</strong><code>'+esc(p.seq)+'</code><button aria-label="Play '+esc(p.name)+'">'+icons.play+'</button></article>'}).join('')}
+  function renderLibrary(){var box=$('#libraryList');if(!library.length){box.innerHTML='<div class="empty">Your saved pieces will appear here.</div>'; persist(); return;} box.innerHTML=library.map(function(p,i){return '<article class="piece" draggable="true" data-piece="'+i+'"><strong>'+esc(p.name)+'</strong><code>'+esc(p.seq)+'</code><button aria-label="Play '+esc(p.name)+'">'+icons.play+'</button></article>'}).join(''); persist();}
   function openPicker(i,btn){pickerLayer=i;var p=$('#soundPopover'),r=btn.getBoundingClientRect();p.style.left=Math.max(14,Math.min(innerWidth-374,r.left))+'px';p.style.top=Math.min(innerHeight-300,r.bottom+7)+'px';renderPicker();p.classList.add('open')}
   function renderPicker(){var l=layers[pickerLayer],keys=Object.keys(families);$('#families').innerHTML=keys.map(function(f){return '<button class="family '+(f===l.family?'selected':'')+'" data-family="'+f+'">'+f+'</button>'}).join('');$('#sounds').innerHTML=families[l.family].map(function(s,i){return '<button class="sound" data-sound="'+s[1]+'"><b>'+String(i+1).padStart(2,'0')+'</b><small>'+esc(s[0])+'</small></button>'}).join('')}
   $('#layers').addEventListener('input',function(e){var el=e.target.closest('.layer'),i=Number(el.dataset.index);if(e.target.classList.contains('sequence')){var clean=e.target.value.replace(/\D/g,'');if(clean!==e.target.value)e.target.value=clean;layers[i].seq=clean;$('.layer-name span',el).textContent=clean.length+' STEPS';updateStatus()}else if(e.target.matches('.layer-name input'))layers[i].name=e.target.value});
@@ -163,8 +181,14 @@
   $('#libraryList').addEventListener('dragstart',function(e){var p=e.target.closest('.piece');if(p)e.dataTransfer.setData('text/plain',p.dataset.piece)});$('#libraryList').addEventListener('click',function(e){var p=e.target.closest('.piece');if(p&&e.target.closest('button'))play([library[Number(p.dataset.piece)]])});
   $('#families').addEventListener('click',function(e){var b=e.target.closest('.family');if(b){layers[pickerLayer].family=b.dataset.family;layers[pickerLayer].sound=families[b.dataset.family][0][1];renderPicker()}});$('#sounds').addEventListener('click',function(e){var b=e.target.closest('.sound');if(b){layers[pickerLayer].sound=b.dataset.sound;$('#soundPopover').classList.remove('open');renderLayers();toast(soundName(b.dataset.sound)+' selected')}});$('#closePicker').onclick=function(){$('#soundPopover').classList.remove('open')};document.addEventListener('pointerdown',function(e){if(!e.target.closest('#soundPopover')&&!e.target.closest('.sound-btn'))$('#soundPopover').classList.remove('open')});
   $('#playAll').onclick=function(){playing?stop():play(layers)};$('#addLayer').onclick=function(){if(layers.length>=6){toast('Six layers is the limit');return}layers.push({name:'Layer '+(layers.length+1),seq:'',family:'Keys',sound:'sine'});renderLayers()};$('#saveMix').onclick=function(){layers.filter(function(l){return l.seq}).forEach(savePiece)};$('#clearAll').onclick=function(){stop();layers.forEach(function(l){l.seq=''});renderLayers();toast('Working layers cleared')};
+  $('#loopToggle').onclick=function(){looping=!looping;this.classList.toggle('active-loop',looping);persist();toast(looping?'Looping enabled':'Looping disabled')};
+  $('#tempo').addEventListener('input',persist);
   $('#exportBtn').onclick=function(){var data={app:'number-music',version:1,tempo:Number($('#tempo').value)||112,layers:layers,library:library};var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='number-music-session.json';a.click();setTimeout(function(){URL.revokeObjectURL(a.href)},500);toast('Session exported')};
-  $('#importFile').onchange=function(e){var file=e.target.files[0];if(!file)return;var r=new FileReader();r.onload=function(){try{var d=JSON.parse(r.result);if(!Array.isArray(d.layers))throw 0;layers=d.layers.slice(0,6).map(function(l){return{name:String(l.name||'Layer'),seq:String(l.seq||'').replace(/\D/g,''),family:families[l.family]?l.family:'Keys',sound:soundName(l.sound)!==l.sound?l.sound:'sine'}});if(!layers.length)throw 0;library=Array.isArray(d.library)?d.library:[];$('#tempo').value=Math.min(240,Math.max(40,Number(d.tempo)||112));renderLayers();renderLibrary();toast('Session imported')}catch(x){toast('That file is not a valid session')}e.target.value=''};r.readAsText(file)};
+  $('#importFile').onchange=function(e){var file=e.target.files[0];if(!file)return;var r=new FileReader();r.onload=function(){try{var d=JSON.parse(r.result);if(!Array.isArray(d.layers))throw 0;layers=d.layers.slice(0,6).map(function(l){return{name:String(l.name||'Layer'),seq:String(l.seq||'').replace(/\D/g,''),family:families[l.family]?l.family:'Keys',sound:soundName(l.sound)!==l.sound?l.sound:'sine'}});if(!layers.length)throw 0;library=Array.isArray(d.library)?d.library:[];$('#tempo').value=Math.min(240,Math.max(40,Number(d.tempo)||112));if(typeof saved!=='undefined'&&saved&&saved.tempo){$('#tempo').value=saved.tempo;}
+  if(looping){$('#loopToggle').classList.add('active-loop');}
+  renderLayers();renderLibrary();toast('Session imported')}catch(x){toast('That file is not a valid session')}e.target.value=''};r.readAsText(file)};
+  if(typeof saved!=='undefined'&&saved&&saved.tempo){$('#tempo').value=saved.tempo;}
+  if(looping){$('#loopToggle').classList.add('active-loop');}
   renderLayers();renderLibrary();
 })();
 </script>
