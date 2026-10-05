@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1408.0.min.js"></script>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
@@ -90,7 +91,12 @@
       <aside class="panel library">
         <header class="library-head"><h2>Session library</h2><p>Save a layer, then drag it back into any lane.</p></header>
         <div class="library-list" id="libraryList"><div class="empty">Your saved pieces will appear here for this session.</div></div>
-        <div class="library-tools"><button id="exportBtn">Export JSON</button><label>Import JSON<input id="importFile" type="file" accept="application/json,.json" /></label></div>
+        <div class="library-tools">
+          <button id="saveAwsBtn" style="background:var(--accent);color:#fff;border-color:var(--accent)">Save AWS</button>
+          <button id="loadAwsBtn">Load AWS</button>
+          <button id="exportBtn">Export</button>
+          <label>Import<input id="importFile" type="file" accept="application/json,.json" /></label>
+        </div>
       </aside>
     </div>
     <p class="note">Audio starts after your first tap. Your session is automatically saved to your browser.</p>
@@ -117,7 +123,36 @@
     {name:'Spark',seq:'2718281828',family:'Bells',sound:'marimba'},
     {name:'Low line',seq:'1123581321',family:'Bass',sound:'roundbass'}
   ];
-  var library=[]; var looping=false; var pickerLayer=null; var audio=null; var playing=false; var timers=[]; var master=null;
+  var library=[]; var looping=false;
+  AWS.config.region = 'us-east-1';
+  AWS.config.credentials = new AWS.CognitoIdentityCredentials({
+      IdentityPoolId: 'us-east-1:149c0a27-8b0f-4319-b40e-3317c89349dd',
+  });
+  var s3 = new AWS.S3({ apiVersion: '2006-03-01', params: {Bucket: 'number-music-storage-13268637'} });
+
+  function saveToAWS() {
+    var data = JSON.stringify({layers: layers, library: library, tempo: $('#tempo').value, looping: looping});
+    s3.upload({Key: 'session.json', Body: data, ContentType: 'application/json'}, function(err, data) {
+      if (err) { console.error(err); toast('Error saving to AWS'); }
+      else toast('Saved to AWS S3!');
+    });
+  }
+
+  function loadFromAWS() {
+    s3.getObject({Key: 'session.json'}, function(err, data) {
+      if (err) { console.error(err); toast('No cloud save found'); return; }
+      try {
+        var saved = JSON.parse(data.Body.toString('utf-8'));
+        if (saved.layers && saved.layers.length) layers = saved.layers;
+        if (saved.library) library = saved.library;
+        if (saved.looping !== undefined) looping = saved.looping;
+        if (saved.tempo) $('#tempo').value = saved.tempo;
+        if(looping) $('#loopToggle').classList.add('active-loop'); else $('#loopToggle').classList.remove('active-loop');
+        renderLayers(); renderLibrary();
+        toast('Loaded from AWS S3!');
+      } catch(e) { toast('Error parsing cloud save'); }
+    });
+  } var pickerLayer=null; var audio=null; var playing=false; var timers=[]; var master=null;
   try {
     var saved = JSON.parse(localStorage.getItem('number-music-session'));
     if (saved) {
@@ -183,7 +218,7 @@
   $('#playAll').onclick=function(){playing?stop():play(layers)};$('#addLayer').onclick=function(){if(layers.length>=6){toast('Six layers is the limit');return}layers.push({name:'Layer '+(layers.length+1),seq:'',family:'Keys',sound:'sine'});renderLayers()};$('#saveMix').onclick=function(){layers.filter(function(l){return l.seq}).forEach(savePiece)};$('#clearAll').onclick=function(){stop();layers.forEach(function(l){l.seq=''});renderLayers();toast('Working layers cleared')};
   $('#loopToggle').onclick=function(){looping=!looping;this.classList.toggle('active-loop',looping);persist();toast(looping?'Looping enabled':'Looping disabled')};
   $('#tempo').addEventListener('input',persist);
-  $('#exportBtn').onclick=function(){var data={app:'number-music',version:1,tempo:Number($('#tempo').value)||112,layers:layers,library:library};var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='number-music-session.json';a.click();setTimeout(function(){URL.revokeObjectURL(a.href)},500);toast('Session exported')};
+  $('#saveAwsBtn').onclick=saveToAWS; $('#loadAwsBtn').onclick=loadFromAWS; $('#exportBtn').onclick=function(){var data={app:'number-music',version:1,tempo:Number($('#tempo').value)||112,layers:layers,library:library};var blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='number-music-session.json';a.click();setTimeout(function(){URL.revokeObjectURL(a.href)},500);toast('Session exported')};
   $('#importFile').onchange=function(e){var file=e.target.files[0];if(!file)return;var r=new FileReader();r.onload=function(){try{var d=JSON.parse(r.result);if(!Array.isArray(d.layers))throw 0;layers=d.layers.slice(0,6).map(function(l){return{name:String(l.name||'Layer'),seq:String(l.seq||'').replace(/\D/g,''),family:families[l.family]?l.family:'Keys',sound:soundName(l.sound)!==l.sound?l.sound:'sine'}});if(!layers.length)throw 0;library=Array.isArray(d.library)?d.library:[];$('#tempo').value=Math.min(240,Math.max(40,Number(d.tempo)||112));if(typeof saved!=='undefined'&&saved&&saved.tempo){$('#tempo').value=saved.tempo;}
   if(looping){$('#loopToggle').classList.add('active-loop');}
   renderLayers();renderLibrary();toast('Session imported')}catch(x){toast('That file is not a valid session')}e.target.value=''};r.readAsText(file)};
